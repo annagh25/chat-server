@@ -8,6 +8,66 @@ using net::ip::tcp;
 
 using namespace std::literals;
 
+class Session : public std::enable_shared_from_this<Session> {
+public:
+    Session(int id, tcp::socket socket)
+        : id_(id), socket_(std::move(socket)) {}   // Session owns the socket
+
+    void Start() { DoRead(); }
+
+private:
+    void DoRead() {
+        net::async_read_until(socket_, stream_buf_, '\n',
+            [self = shared_from_this()](const boost::system::error_code& ec, std::size_t count) {
+                self->OnRead(ec, count);
+            });
+    }
+
+    void OnRead(const boost::system::error_code& ec, std::size_t count) {
+        if (ec == net::error::eof) {
+            std::cout << "Client "sv << id_ << " disconnected"sv << std::endl;
+            return;                                  // no new op -> Session gets destroyed
+        }
+        if (ec) {
+            std::cout << "Error reading data: "sv << ec.message() << std::endl;
+            return;
+        }
+
+        auto begin = net::buffers_begin(stream_buf_.data());
+        write_buf_.assign(begin, begin + count);     // includes the '\n'
+        stream_buf_.consume(count);                  // consume only this line
+
+        std::cout << "Client "sv << id_ << " said: "sv << write_buf_ << std::flush;
+
+        net::async_write(socket_, net::buffer(write_buf_),   // write_buf_ is a member -> stays alive
+            [self = shared_from_this()](const boost::system::error_code& ec, std::size_t) {
+                if (ec) {
+                    std::cout << "Error sending data: "sv << ec.message() << std::endl;
+                    return;
+                }
+                self->DoRead();                      // chain: next read after the write completes
+            });
+    }
+
+    int id_;
+    tcp::socket socket_;
+    net::streambuf stream_buf_;
+    std::string write_buf_;
+};
+
+void DoAccept(tcp::acceptor& acceptor, int& next_id) {
+    acceptor.async_accept(
+        [&acceptor, &next_id](const boost::system::error_code& ec, tcp::socket socket) {
+            if (ec) {
+                std::cout << "Can't accept connection: "sv << ec.message() << std::endl;
+            } else {
+                std::cout << "Connected"sv << std::endl;
+                std::make_shared<Session>(next_id++, std::move(socket))->Start();
+            }
+            DoAccept(acceptor, next_id);             // chain: accept the next client
+        });
+}
+
 int main() {
     static const int port = 3333;
 
@@ -16,44 +76,9 @@ int main() {
     tcp::acceptor acceptor(io_context, tcp::endpoint(tcp::v4(), port));
     std::cout << "Waiting for connection..."sv << std::endl;
 
-    boost::system::error_code ec;
-    tcp::socket socket{io_context};
-    acceptor.accept(socket, ec);
+    int next_id = 0;
+    DoAccept(acceptor, next_id);
 
-    if (ec) {
-        std::cout << "Can't accept connection"sv << std::endl;
-        return 1;
-    }
-
-    std::cout << "Connected"sv << std::endl;
-
-    net::streambuf stream_buf;
-
-    while (true) {
-        std::size_t count = net::read_until(socket, stream_buf, '\n', ec);
-
-        if (ec == net::error::eof) {
-            std::cout << "Client disconnected"sv << std::endl;
-            break;
-        }
-
-        if (ec) {
-            std::cout << "Error reading data"sv << std::endl;
-            return 1;
-        }
-
-        auto begin = net::buffers_begin(stream_buf.data());
-        std::string client_data(begin, begin + count);
-
-        stream_buf.consume(count);
-
-        std::cout << "Client said: "sv << client_data << std::endl;
-
-        net::write(socket, net::buffer(client_data), ec);
-
-        if (ec) {
-            std::cout << "Error sending data"sv << std::endl;
-            return 1;
-        }
-    }
+    io_context.run();
+    return 0;
 }

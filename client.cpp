@@ -33,12 +33,15 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    net::streambuf stream_buf;
 
     while (true) {
-
         std::string text;
-        std::cin >> text;
-        socket.write_some(net::buffer(text + '\n'), ec);
+        if (!std::getline(std::cin, text)) {
+            break;   // input ended → exit the loop
+        }
+        net::write(socket, net::buffer(text + '\n'), ec);
+
         if (ec) {
             std::cout << "Error sending data"sv << std::endl;
             return 1;
@@ -46,16 +49,15 @@ int main(int argc, char** argv) {
 
         std::cout << "Sent" << std::endl;
 
-        net::streambuf stream_buf;
-        net::read_until(socket, stream_buf, '\n', ec);
-        std::string server_data{std::istreambuf_iterator<char>(&stream_buf),
-                                std::istreambuf_iterator<char>()};
-
+        std::size_t count = net::read_until(socket, stream_buf, '\n', ec);
         if (ec) {
             std::cout << "Error reading data"sv << std::endl;
             return 1;
         }
+        auto begin = net::buffers_begin(stream_buf.data());
+        std::string server_data(begin, begin + count);
 
+        stream_buf.consume(count);
         std::cout << "Server responded: "sv << server_data << std::endl;
     }
 }

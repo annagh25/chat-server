@@ -20,27 +20,36 @@ int main() {
     tcp::socket socket{io_context};
     acceptor.accept(socket, ec);
 
-    std::cout << "Connected"sv << std::endl;
-
     if (ec) {
         std::cout << "Can't accept connection"sv << std::endl;
         return 1;
     }
 
+    std::cout << "Connected"sv << std::endl;
+
+    net::streambuf stream_buf;
+
     while (true) {
-        net::streambuf stream_buf;
-        net::read_until(socket, stream_buf, '\n', ec);
-        std::string client_data{std::istreambuf_iterator<char>(&stream_buf),
-                                std::istreambuf_iterator<char>()};
+        std::size_t count = net::read_until(socket, stream_buf, '\n', ec);
+
+        if (ec == net::error::eof) {
+            std::cout << "Client disconnected"sv << std::endl;
+            break;
+        }
 
         if (ec) {
             std::cout << "Error reading data"sv << std::endl;
             return 1;
         }
 
+        auto begin = net::buffers_begin(stream_buf.data());
+        std::string client_data(begin, begin + count);
+
+        stream_buf.consume(count);
+
         std::cout << "Client said: "sv << client_data << std::endl;
 
-        socket.write_some(net::buffer(client_data), ec);
+        net::write(socket, net::buffer(client_data), ec);
 
         if (ec) {
             std::cout << "Error sending data"sv << std::endl;

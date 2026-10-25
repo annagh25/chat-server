@@ -21,8 +21,12 @@ if(WIN32)
   add_definitions(-DNOMINMAX)
 endif()
 
-add_executable(client client.cpp)
-add_executable(server server.cpp)
+add_executable(client client/client.cpp)
+add_executable(server server/server.cpp
+        server/Session.cpp
+        server/Session.h
+        server/Room.cpp
+        server/Room.h)
 target_link_libraries(client PRIVATE Threads::Threads dl)
 target_link_libraries(server PRIVATE Threads::Threads dl)
 
